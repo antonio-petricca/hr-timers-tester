@@ -18,83 +18,139 @@ MODULE_DESCRIPTION("HR timers tester.");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("0.0.1");
 
-#define START_TIME      100
-#define END_TIME        1000 * 1000 * 1000
-#define STEP_LOOPS      5
-#define LOOP_MULTIPLIER 2
+#define OUTER_LOOP_START  10      /* 10 uS */
+#define OUTER_LOOP_END    1000000 /* 1 s  */
+#define LOOP_ITEMS        46
+
+struct perf_sample
+{
+  int     expected;
+  ktime_t sampled;
+};
 
 static struct  completion sem;
+
 static struct  hrtimer    timer;
+static ktime_t            timer_incr;
+static ktime_t            timer_perf;
+static int                timer_perf_index;
+static struct perf_sample timer_perf_samplings[LOOP_ITEMS];
 
-static ktime_t            loc_perf_time;
-static ktime_t            tot_perf_time;
+static int                inner_loop_index; 
+static int                inner_loop_incr; 
+static int                inner_loop_end; 
 
-static ktime_t            end_time;
-volatile ktime_t          delay_time;
-volatile int              step_loops;
-
-#define GET_PERF_TIME(perf_time) ktime_to_ns(ktime_sub(ktime_get(), perf_time))
-#define SET_PERF_TIME(perf_time) perf_time = ktime_get()
-
-enum hrtimer_restart timer_callback(struct hrtimer *timer)
+enum hrtimer_restart hrtimers_test_callback(struct hrtimer *timer)
 {
-  pr_info(
-    "[%d] %15llu = %15llu ns\n", 
-    (STEP_LOOPS - step_loops + 1),
-    ktime_to_ns(delay_time), 
-    GET_PERF_TIME(loc_perf_time)
-  );
-
-  SET_PERF_TIME(loc_perf_time);
-  
-  step_loops--;
-
-  if (step_loops <= 0)
+  if (inner_loop_index >= inner_loop_end)
   {
-    if (delay_time >= end_time)
-    {
-      complete(&sem);
-      return HRTIMER_NORESTART;
-    }
-
-    delay_time *= LOOP_MULTIPLIER;
-    step_loops  = STEP_LOOPS;
+    complete(&sem);
+    return HRTIMER_NORESTART;
   }
 
-  hrtimer_forward_now(timer, delay_time);
+  timer_perf_samplings[timer_perf_index].expected = inner_loop_index;
+  
+  timer_perf_samplings[timer_perf_index].sampled = 
+    ktime_sub(ktime_get(), timer_perf);
+
+  /*pr_info(
+    "  inner loop = %9d => %9llu\n", 
+    inner_loop_index,
+    ktime_to_ns(timer_perf_samplings[timer_perf_index].sampled)
+  );*/
+
+  timer_perf_index++;
+  timer_perf = ktime_get();
+
+  inner_loop_index += inner_loop_incr;
+  timer_incr        = ktime_set(0, (inner_loop_index * 1000));
+
+  hrtimer_forward_now(timer, timer_incr);
+
   return HRTIMER_RESTART;
 }
 
-static int __init timertest_init(void)
+static void hrtimers_test_collect(void)
 {
-  pr_info("Started...\n");
+  int     outer_loop_index;
+  int     outer_loop_end;
+  ktime_t perf_time;
+  
+  pr_info("Collecting...\n");
   
   init_completion(&sem);
-
   hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-  timer.function = &timer_callback;
 
-  delay_time = ktime_set(0, START_TIME);
-  end_time   = ktime_set(0, END_TIME);
-  step_loops = STEP_LOOPS;
+  timer.function   = &hrtimers_test_callback;
 
-  SET_PERF_TIME(tot_perf_time);
-  SET_PERF_TIME(loc_perf_time);
+  outer_loop_index = OUTER_LOOP_START;
+  outer_loop_end   = (OUTER_LOOP_END / 10);
+  
+  timer_perf_index = 0;
+  perf_time        = ktime_get();
 
-  hrtimer_start(&timer, delay_time, HRTIMER_MODE_REL);
-  wait_for_completion_killable(&sem);
+  while (outer_loop_index <= outer_loop_end)
+  {
+    //pr_info("outer loop = %9d\n", outer_loop_index);
 
-  pr_info("Completed in ~ %15llu ns.\n", GET_PERF_TIME(tot_perf_time));
+    inner_loop_index = outer_loop_index;
+    inner_loop_incr  = outer_loop_index;
+    timer_incr       = ktime_set(0, (inner_loop_incr * 1000));
+
+    inner_loop_end   = 
+        (outer_loop_index < outer_loop_end)
+      ? (inner_loop_index * 10)
+      : (inner_loop_index * (10 + 1))
+    ;
+
+    timer_perf = ktime_get();
+
+    hrtimer_start(&timer, timer_incr, HRTIMER_MODE_REL);
+    wait_for_completion_killable(&sem);
+    
+    outer_loop_index *= 10;
+  }
 
   hrtimer_cancel(&timer);
+
+  pr_info(
+    "Completed in ~ %9llu ns.\n", 
+    ktime_to_ns(ktime_sub(ktime_get(), perf_time))
+  );
+}
+
+static void hrtimers_test_print_samplings(void)
+{
+  int index = 0;
+
+  pr_info("Sampled values:\n");
+
+  for (index = 0; index < LOOP_ITEMS; index++)
+  {
+    unsigned long long time = ktime_to_ns(timer_perf_samplings[index].sampled);
+
+    pr_info(
+      " [%2d] %7d = %7llu.%03llu uS",
+      (index + 1),
+      timer_perf_samplings[index].expected,
+      (time / 1000),
+      (time % 1000)
+    );
+  }
+}
+
+static int __init hrtimers_test_init(void)
+{
+  hrtimers_test_collect();
+  hrtimers_test_print_samplings();
 
   return 0;
 }
 
-static void __exit timertest_exit(void)
+static void __exit hrtimers_test_exit(void)
 {
   pr_info("module unloaded.\n");
 }
 
-module_init(timertest_init);
-module_exit(timertest_exit); 
+module_init(hrtimers_test_init);
+module_exit(hrtimers_test_exit); 
