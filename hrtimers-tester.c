@@ -128,7 +128,7 @@ static void hrtimers_test_print_samplings(void)
   for (index = 0; index < LOOP_ITEMS; index++)
   {
     pr_info(
-      " [%2d] %7d = %10llu nS",
+      " [%2d] %7d = %10llu nS\n",
       (index + 1),
       timer_perf_samplings[index].expected,
       ktime_to_ns(timer_perf_samplings[index].sampled)
