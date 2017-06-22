@@ -127,14 +127,11 @@ static void hrtimers_test_print_samplings(void)
 
   for (index = 0; index < LOOP_ITEMS; index++)
   {
-    unsigned long long time = ktime_to_ns(timer_perf_samplings[index].sampled);
-
     pr_info(
-      " [%2d] %7d = %7llu.%03llu uS",
+      " [%2d] %7d = %10llu nS",
       (index + 1),
       timer_perf_samplings[index].expected,
-      (time / 1000),
-      (time % 1000)
+      ktime_to_ns(timer_perf_samplings[index].sampled)
     );
   }
 }
