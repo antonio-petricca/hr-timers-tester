@@ -4,7 +4,6 @@ This is a Linux kernel driver module to be used to test High Resolution Timers p
 
 ### How do I could you it? ###
 
- - Install kernel sources for your distribution ("apt-get install linux-source").
  - Compile by the command "make".
  - In a secondary terminal window issue the command "make log-tail".
  - In the primary terminal window issue the command "make install".
